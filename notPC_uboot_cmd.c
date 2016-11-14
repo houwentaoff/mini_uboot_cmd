@@ -1,9 +1,9 @@
 /*
  * =====================================================================================
  *       Copyright (c), 2013-2020, Jz.
- *       Filename:  main.c
+ *       Filename:  uboot_cmd.c
  *
- *    Description:  
+ *    Description:  This file is porting from the project uboot so keep its style.
  *         Others:
  *
  *        Version:  1.0
@@ -21,6 +21,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
+#include <ctype.h>
 
 #define CMD_FLAG_REPEAT  0x0001/*  repeat last command*/
 #define CMD_FLAG_BOOTD   0x0002/*  command is from bootd*/ 
@@ -52,12 +53,12 @@ struct cmd_tbl_s {
 
 typedef struct cmd_tbl_s cmd_tbl_t;
 
-int help_cmd(struct cmd_tbl_s *cmd_tbl, int a, int b, char * const c[]);
+int help_cmd(struct cmd_tbl_s *cmdtp, int flag, int argc, char * const argv[]);
 
 cmd_tbl_t cmd_tbls[10] = {
     {
         .name = "help",
-        .maxargs = 1,
+        .maxargs = 2,
         .repeatable = 0,
         .cmd = help_cmd,
         .usage = "help cmd",
@@ -70,20 +71,28 @@ char        console_buffer[256 + 1]; /*  console I/O buffer*/
 static const char erase_seq[] = "\b \b";/* erase sequence */
 static const char   tab_seq[] = "        ";/* used to expand TABs*/
 
-int help_cmd(struct cmd_tbl_s *cmd_tbl, int a, int b, char * const c[])
+int help_cmd(struct cmd_tbl_s *cmdtp, int flag, int argc, char * const argv[])
 {
-    if (!cmd_tbl)
+    (void)flag;
+    
+    if (argc != 2)
+    {
+        printf("Usage: %s\n",  cmdtp->usage);
+        return (-1);
+    }
+    if (!cmdtp)
     {
         printf("error\n");
         return -1;
     }
-    printf("help cmd .....\n");
+    printf("exec help cmd .....\n");
     return 0;
 }
 void prt_puts(const char *str)
 {
-    while (*str)
-        putc(*str++, stdout);
+    puts(str);
+    //while (*str)
+    //    putc(*str++, stdout);
 }
 /* pass 1 to disable ctrlc() checking, 0 to enable.
  * returns previous state
@@ -102,7 +111,7 @@ int disable_ctrlc(int disable)
  */
 int ivm_read_eeprom(void)
 {
-
+    return 0;
 }
 int hush_init_var(void)
 {
@@ -312,7 +321,7 @@ static int cmd_call(cmd_tbl_t *cmdtp, int flag, int argc, char * const argv[])
 
     result = (cmdtp->cmd)(cmdtp, flag, argc, argv);
     if (result)
-        printf("Command failed, result=%d", result);
+        printf("Command failed, result=%d ", result);
     return result;
 }
 
@@ -334,7 +343,7 @@ int cmd_usage(const cmd_tbl_t *cmdtp)
     return 1;
 }
 enum command_ret_t cmd_process(int flag, int argc, char * const argv[],
-        int *repeatable, ulong *ticks)
+        int *repeatable, unsigned int/*ulong*/ *ticks)
 {
     enum command_ret_t rc = CMD_RET_SUCCESS;
     cmd_tbl_t *cmdtp;
@@ -343,7 +352,7 @@ enum command_ret_t cmd_process(int flag, int argc, char * const argv[],
     cmdtp = find_cmd(argv[0]);
     if (cmdtp == NULL) {
         printf("Unknown command '%s' - try 'help'\n", argv[0]);
-        return 1;
+        return CMD_RET_FAILURE;//1;
     }
     /*  found - check max args */
     if (argc > cmdtp->maxargs)
@@ -354,12 +363,12 @@ enum command_ret_t cmd_process(int flag, int argc, char * const argv[],
     /* If OK so far, then do the command  */
     if (!rc)
     {
-        rc = cmd_call(cmdtp, flag, argc, argv);
+        rc = (enum command_ret_t)cmd_call(cmdtp, flag, argc, argv);
         *repeatable &= cmdtp->repeatable;
     }
     if (rc == CMD_RET_USAGE)
     {
-        rc = cmd_usage(cmdtp);
+        rc = (enum command_ret_t)cmd_usage(cmdtp);
     }
     return rc;
 }
@@ -499,9 +508,12 @@ static int run_main_loop(void)
 {
     /*  main_loop() can return to retry autoboot, if so just run it again */
     for (;;)
+    {
         main_loop();
+    }
     return 0;
 }
+
 /* 
  * ===  FUNCTION  ======================================================================
  *         Name:  main
@@ -511,5 +523,5 @@ static int run_main_loop(void)
 int main ( int argc, char *argv[] )
 {
     run_main_loop();
-    return EXIT_SUCCESS;
+    return 0;
 }
