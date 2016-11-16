@@ -218,7 +218,7 @@ static int _do_env_set(int flag, int argc, char * const argv[])
 	ENTRY e, *ep;
 	int env_flag = H_INTERACTIVE;
 
-	debug("Initial value for argc=%d\n", argc);
+//	debug("Initial value for argc=%d\n", argc);
 	while (argc > 1 && **(argv + 1) == '-') {
 		char *arg = *++argv;
 
@@ -233,7 +233,7 @@ static int _do_env_set(int flag, int argc, char * const argv[])
 			}
 		}
 	}
-	debug("Final value for argc=%d\n", argc);
+//	debug("Final value for argc=%d\n", argc);
 	name = argv[1];
 	value = argv[2];
 
@@ -323,17 +323,127 @@ static int do_env_print(/* cmd_tbl_t *cmdtp, */ int flag, int argc,
 			printf("## Error: \"%s\" not defined\n", argv[i]);
 			++rcode;
 		}
-	}
+    }
 
-	return rcode;
+    return rcode;
 }
 
+    ssize_t hexport_r(struct hsearch_data *htab, const char sep, int flag, char **resp, size_t size, int argc, char * const argv[])
+{
+    ENTRY *list[htab->size];
+    char *res, *p;
+    size_t totlen;
+    int i, n;
 
+    /*  Test for correct arguments.  */
+    if ((resp == NULL) || (htab == NULL)) {
+        return (-1);
+    }
+    /*
+     ** Pass 1:
+     ** search used entries,
+     ** save addresses and compute total length
+     */
+    for (i = 0, n = 0, totlen = 0; i <= htab->size; ++i) 
+    {
+        if (htab->table[i].used > 0) {
+            ENTRY *ep = &htab->table[i].entry;
+            int arg, found = 0;
+
+            for (arg = 0; arg < argc; ++arg) {
+                if (strcmp(argv[arg], ep->key) == 0) {
+                    found = 1;
+                    break;
+                }
+            }
+            if ((argc > 0) && (found == 0))
+                continue;
+
+            if ((flag & H_HIDE_DOT) && ep->key[0] == '.')
+                continue;
+
+            list[n++] = ep;
+
+            totlen += strlen(ep->key) + 2;
+
+            if (sep == '\0') {
+                totlen += strlen(ep->data);
+            } else {/*  check if escapes are needed */
+                char *s = ep->data;
+
+                while (*s) {
+                    ++totlen;
+                    /*  add room for needed escape chars */
+                    if ((*s == sep) || (*s == '\\'))
+                        ++totlen;
+                    ++s;
+                }
+            }
+            totlen += 2;/*  for '=' and 'sep' char */
+        }
+    }
+    /*  Check if the user supplied buffer size is sufficient */
+    if (size) 
+    {
+        if (size < totlen + 1) 
+        {  
+            /*  provided buffer too small */
+            printf("Env export buffer too small: %zu, "
+                    "but need %zu\n", size, totlen + 1);
+            return (-1);
+        }
+    } 
+    else 
+    {
+        size = totlen + 1;
+    }
+    /*  Check if the user provided a buffer */
+    if (*resp) 
+    {
+        /*  yes; clear it */
+        res = *resp;
+        memset(res, '\0', size);
+    } 
+    else 
+    {
+        /*  no, allocate and clear one */
+        *resp = res = calloc(1, size);
+        if (res == NULL) 
+        {
+            return (-1);
+        }
+    }
+    /*
+     ** Pass 2:
+     ** export sorted list of result data
+     **
+     */
+    for (i = 0, p = res; i < n; ++i) {
+        const char *s;
+
+        s = list[i]->key;
+        while (*s)
+            *p++ = *s++;
+        *p++ = '=';
+
+        s = list[i]->data;
+
+        while (*s) {
+            if ((*s == sep) || (*s == '\\'))
+                *p++ = '\\';/*  escape */
+            *p++ = *s++;
+        }
+        *p++ = sep;
+    }
+    *p = '\0';/*  terminate result */
+
+    return size;
+}
 
 static int env_print(char *name, int flag)
 {
-	char *res = NULL;
-	size_t len;
+    char *res = NULL;
+    size_t len;
 
 	if (name) {		/* print a single name */
 		ENTRY e, *ep;
@@ -348,7 +458,7 @@ static int env_print(char *name, int flag)
 	}
 
 	/* print whole list */
-	len = 0;//hexport_r(&env_htab, '\n', flag, &res, 0, 0, NULL);
+	len = hexport_r(&env_htab, '\n', flag, &res, 0, 0, NULL);
 
 	if (len > 0) {
 		puts(res);
@@ -369,8 +479,11 @@ static int env_print(char *name, int flag)
 int main ( int argc, char *argv[] )
 {
     do_setenv("mac", "08:00:27:c2:d1:04");
+    do_setenv("baudrate", "115200");
+    do_setenv("ipaddr", "192.168.1.1");
     env_print(NULL, H_HIDE_DOT);
     env_print("mac", H_HIDE_DOT);
+    //env_print("mac", H_HIDE_DOT);
     return EXIT_SUCCESS;
 }
 
