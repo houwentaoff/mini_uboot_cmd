@@ -9,9 +9,9 @@
 4. 支持tab键.
 
 ## Log 
-** The folling is the correct log. please check it. **
-
-lorawan>help
+**A The folling is the correct log. please check it. **
+```
+lorawan>help  
 help    - print command description/usage
 version - print monitor, compiler and linker version
 printenv- print environment variables
@@ -44,5 +44,5 @@ NWKSKEY=CD:00:00:00:CD:00:00:00:CD:00:00:00:CD:00:00:77
 APPSKEY=CE:00:00:00:CE:00:00:00:CE:00:00:00:CE:00:00:00
 
 Environment size: 282/4096 bytes
-
+```
 
