@@ -53,6 +53,16 @@ int uboot_cmd_register (cmd_tbl_t *cmd);
  * @return 
  */
 int run_main_loop(callback cb, void *para);
+/**
+ * @brief 
+ *
+ * @return 
+ */
+int hush_init_var(void);
+
+#ifndef __GLIBC__
+char *getenv(const char *name);
+#endif
 
 #ifdef __cplusplus
 }

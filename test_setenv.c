@@ -479,6 +479,7 @@ static int env_print(char *name, int flag)
 int main ( int argc, char *argv[] )
 {
     do_setenv("mac", "08:00:27:c2:d1:04");
+    do_setenv("mac", "ccccc");
     do_setenv("baudrate", "115200");
     do_setenv("ipaddr", "192.168.1.1");
     env_print(NULL, H_HIDE_DOT);

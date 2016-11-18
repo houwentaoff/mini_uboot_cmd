@@ -1,3 +1,7 @@
+# 说明
+
+用于单片机的命令解析器。
+
 ## FEA
 1. 支持退格删除.
 2. 按下回车默认执行上一条指令.
@@ -7,26 +11,38 @@
 ## Log 
 ** The folling is the correct log. please check it. **
 
-jz>help
-Usage: help cmd
-Command failed, result=-1 help - help cmd
+lorawan>help
+help    - print command description/usage
+version - print monitor, compiler and linker version
+printenv- print environment variables
+setenv  - set environment variables
+saveenv - save environment variables to persistent storage
+reset   - reset cpu
+port    - config lorawan port
+adr     - adaptive speed switch
+dr      - config speed
+ch      - config sx1278 chan
+power   - config sx1278 transmit power
+mode    - config sx1278 node join mode
+join    - lorawan join cmd
+id      - lorawan generation mode
 
-jz>help 1
-exec help cmd .....
-jz>help help
-exec help cmd .....
-jz>help 1 2
-help - help cmd
 
-jz><INTERRUPT>
-jz>ssss
+lorawan><INTERRUPT>
+lorawan>ssss
 Unknown command 'ssss' - try 'help'
-jz>help
-Usage: help cmd
-Command failed, result=-1 help - help cmd
+lorawan>saveenv
+Saving Environment to EEPROM..
 
-jz>
-jz><INTERRUPT>
-jz><INTERRUPT>
-jz>
+lorawan>printenv
+DEVADDR=CC:00:00:99
+DEVEUI=C8:00:00:00:C8:00:00:22
+APPEUI=11:22:33:44:55:66:77:89
+APPKEY=CA:00:00:00:CA:00:00:00:CA:00:00:00:CA:00:00:88
+NETID=CB:00:00:00
+NWKSKEY=CD:00:00:00:CD:00:00:00:CD:00:00:00:CD:00:00:77
+APPSKEY=CE:00:00:00:CE:00:00:00:CE:00:00:00:CE:00:00:00
+
+Environment size: 282/4096 bytes
+
 
