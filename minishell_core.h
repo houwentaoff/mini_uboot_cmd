@@ -15,7 +15,7 @@
 
 #include "config.h"
 
-typedef void(*callback)(void *);/* callback main loop used */
+typedef void(*callback)(void *);/* callback (other loop) main loop used */
 
 struct cmd_tbl_s {
     char  *name;/*  Command Name*/
@@ -54,15 +54,15 @@ int uboot_cmd_register (cmd_tbl_t *cmd);
  */
 void run_main_loop(callback cb, void *para);
 /**
- * @brief 
+ * @brief           hush table init
  *
- * @return 
+ * @return          0: success -1:fail
  */
 int hush_init_var(void);
 
 #ifndef __GLIBC__
 /**
- * @brief 
+ * @brief           Same as system function getenv
  *
  * @param name
  *
@@ -70,10 +70,10 @@ int hush_init_var(void);
  */
 char *getenv(const char *name);
 /**
- * @brief 
+ * @brief           set env var to sys
  *
- * @param varname
- * @param varvalue
+ * @param varname   name
+ * @param varvalue  value
  *
  * @return 
  */

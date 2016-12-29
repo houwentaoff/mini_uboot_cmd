@@ -49,13 +49,13 @@
 #define CONFIG_SYS_HELP_CMD_WIDTH   8       
 #define CONFIG_SYS_MAXARGS     8            /* all cmd max args */
 #define CONFIG_SYS_CBSIZE      256          /* Console I/O Buffer Size */
-#define CONFIG_SYS_CMDCOUNT    20           /* Cmd Count */
+#define CONFIG_SYS_CMDCOUNT    30           /* Cmd Count */
 #define CONFIG_SYS_VARCOUNT    20           /*  env var count*/
 
 #define CONFIG_ENV_MIN_ENTRIES CONFIG_SYS_VARCOUNT
 #define CONFIG_ENV_MAX_ENTRIES (CONFIG_SYS_VARCOUNT+2)
 
-#define CRC_DEFAULT       0x1122335c
+#define CRC_DEFAULT       0x1122334c
 
 #define     CMD_DEBUG               0
 
@@ -83,6 +83,11 @@ enum env_op {
     env_op_overwrite,
 };
 typedef  int ssize_t;
+typedef unsigned long phys_addr_t;
+typedef unsigned long phys_size_t;
+typedef unsigned int ulong;
+typedef unsigned int uint;
+
 /*  Action which shall be performed in the call the hsearch.  */
 typedef enum {
     FIND,
@@ -152,6 +157,10 @@ extern int32_t E2promBusRead(unsigned int DevAddr, unsigned int Offset,
                unsigned char *Buffer, unsigned int Cnt);
 extern int32_t E2promBusWrite(unsigned int DevAddr, unsigned int Offset,
                 unsigned char *Buffer, unsigned int Cnt);
+extern int32_t E2promBusErase(unsigned int DevAddr, unsigned int Offset,
+			    unsigned int Cnt);
+extern unsigned long SimpleStrtoul(const char *cp, char **endp,
+                unsigned int Base);
 
 
 static int do_help(struct cmd_tbl_s *cmdtp, int flag, int argc, char * const argv[]);
@@ -165,6 +174,7 @@ static int do_env_save(cmd_tbl_t *cmdtp, int flag, int argc,
                char * const argv[]);
 static int do_env_default(cmd_tbl_t *cmdtp, int __flag,
 			  int argc, char * const argv[]);
+static int do_mem_md(cmd_tbl_t *cmdtp, int flag, int argc, char * const argv[]);
 
 cmd_tbl_t cmd_tbls[CONFIG_SYS_CMDCOUNT] = {
     {
@@ -172,7 +182,7 @@ cmd_tbl_t cmd_tbls[CONFIG_SYS_CMDCOUNT] = {
         .maxargs = CONFIG_SYS_MAXARGS,
         .repeatable = 1,
         .cmd   = do_help,
-        .usage = "print command description/usage",
+        .usage = "print command description/usage\n",
 #ifdef CONFIG_SYS_LONGHELP
         .help  = "\n"
                  "   - print brief description of all commands\n"
@@ -181,13 +191,13 @@ cmd_tbl_t cmd_tbls[CONFIG_SYS_CMDCOUNT] = {
 #endif                 
     },
     {
-            .name = "default",
-            .maxargs = 8,
-            .repeatable = 0,
-            .cmd = do_env_default,
-            .usage = "load default env",
+        .name = "default",
+        .maxargs = 8,
+        .repeatable = 0,
+        .cmd = do_env_default,
+        .usage = "load default env",
 #ifdef CONFIG_SYS_LONGHELP
-            .help  = "- [-f] -a - [forcibly] reset default environment\n"
+        .help  = "- [-f] -a - [forcibly] reset default environment\n"
                      "default [-f] var [...] - [forcibly] reset variable(s) to their default values\n",
 #endif                 
     },      
@@ -237,14 +247,25 @@ cmd_tbl_t cmd_tbls[CONFIG_SYS_CMDCOUNT] = {
 #ifdef CONFIG_SYS_LONGHELP
         .help  = "",
 #endif                 
+    },
+    {
+        .name  = "md",
+        .maxargs = 3,
+        .repeatable = 1,
+        .cmd   = do_mem_md,
+        .usage = "memory display",
+#ifdef CONFIG_SYS_LONGHELP
+        .help  = "[.b, .w, .l] address [# of objects]\n"
+                 "eg:md.w 0x08080800 10",
+#endif                 
     },     
 };
 const char __weak version_string[] = MINISHELL_VERSION_STRING;
 const char *env_name_spec = "EEPROM";
 #ifdef MINISHELL_VERSION
-static int cmd_count = 6;    /* cur cmd count : in arrary (cmd_tbls)*/
+static int cmd_count = 7;    /* cur cmd count : in arrary (cmd_tbls)*/
 #else
-static int cmd_count = 5;
+static int cmd_count = 6;
 #endif
 /*  test if ctrl-c was pressed */
 static int ctrlc_disabled = 0;/*  see disable_ctrl() */
@@ -452,6 +473,22 @@ int disable_ctrlc(int disable)
         ctrlc_disabled = disable;
     return prev;
 }
+uint32_t  crc32 (uint32_t seed, const char *buffer, uint32_t len)
+{
+    uint32_t crc = 0x0;
+    uint32_t i = 0;
+
+    if (!buffer)
+    {
+        printf("crc Calculation fail \n");
+        return (crc = (uint32_t)-1);
+    }
+    for (i=0; i<len; i++)
+    {
+        crc ^= (uint32_t)buffer[i];
+    }
+    return crc;    
+}
 
 /*
  * Pointer to initial global data area
@@ -460,6 +497,11 @@ int disable_ctrlc(int disable)
  */
 static gd_t *gd = NULL;/* global_data;(from uboot) */
 
+/**
+ * @brief in future, it will be hush. now it is array
+ *
+ * @return 
+ */
 int hush_init_var(void)
 {   
 #define MAX_VALUE_STR     64
@@ -469,6 +511,7 @@ int hush_init_var(void)
     unsigned int len;    
     int flags = 0;
     uint32_t crc = 0;
+    uint32_t new_crc = 0;
 #ifdef LEGACY_STYLE
     int i = 0;
     ENTRY e, *ep = NULL;
@@ -500,12 +543,7 @@ int hush_init_var(void)
     E2promBusRead(CONFIG_SYS_DEF_EEPROM_ADDR,
         CONFIG_ENV_OFFSET + offsetof(env_t, crc),
         (unsigned char *)&crc, sizeof(crc));
-    if (crc != CRC_DEFAULT)
-    {
-        gd->env_valid = 0;
-        set_default_env(NULL);
-        return 0;
-    }
+
     len = ENV_SIZE;
     off = offsetof(env_t, data);
     /* read str data */
@@ -518,8 +556,14 @@ int hush_init_var(void)
         len -= n;
         off += n;
     }
-    /* check it is str? */
-    
+    /* check it is str? crc */
+    new_crc = crc32(0, (char *)data, ENV_SIZE);
+    if (crc == (uint32_t)-1 ||  new_crc == (uint32_t)-1 || crc != new_crc)
+    {
+        gd->env_valid = 0;
+        set_default_env("!bad CRC");
+        return 0;
+    }
     /* crc is ok */ 
     gd->env_valid   = 1;
     gd->env_addr    = offsetof(env_t, data);
@@ -720,18 +764,22 @@ int parse_line (char *line, char *argv[])
 cmd_tbl_t *find_cmd (const char *cmd)
 {
     int i = 0;
-    int len = sizeof (cmd_tbls)/sizeof (cmd_tbl_t);
+    int count = sizeof (cmd_tbls)/sizeof (cmd_tbl_t);
     cmd_tbl_t *ret = NULL;
+    const char *p;
+    int len;
 //    cmd_tbl_t *start = ll_entry_start(cmd_tbl_t, cmd);
 //    const int len = ll_entry_count(cmd_tbl_t, cmd);
-    for (i=0; i < len; i++)
+	len = ((p = strchr(cmd, '.')) == NULL) ? strlen (cmd) : (p - cmd);
+
+    for (i=0; i < count; i++)
     {
         if (cmd_tbls[i].name == NULL)
         {
             ret = NULL;
             break;
         }
-        if (strcmp(cmd_tbls[i].name, cmd) == 0)
+        if (strncmp(cmd_tbls[i].name, cmd, len) == 0)
         {
             ret =  &cmd_tbls[i];
             break;
@@ -1422,7 +1470,7 @@ static int himport_r(struct hsearch_data *htab,
     /* make a local copy of the list of variables */
     if (nvars)
         memcpy(localvars, vars, sizeof(vars[0]) * nvars);
-#if 0   /* may be used in future (from uboot)*/
+#if 1   /* may be used in future (from uboot)*/
     if ((flag & H_NOCLEAR) == 0) {
         /* Destroy old hash table if one exists */
         cmd_debug("Destroy Hash Table: %p table = %p\n", htab,
@@ -1583,7 +1631,6 @@ static int env_print(char *name, int flag)
     /* should never happen */
     return 0;
 }
-
 static int saveenv(void)
 {
     char *res = NULL;
@@ -1595,6 +1642,7 @@ static int saveenv(void)
     env_t    *env_new = (env_t *)env_buf;
     unsigned int off    = CONFIG_ENV_OFFSET;
     
+    env_new->crc = CRC_DEFAULT;
     res = (char *)env_new->data;
     len = hexport_r(&env_htab, '\0', 0, &res, ENV_SIZE, 0, NULL);
     if (len < 0) {
@@ -1602,7 +1650,18 @@ static int saveenv(void)
         return 1;
     }
 
-    env_new->crc = CRC_DEFAULT;
+    env_new->crc = crc32(0, (char *)env_new->data, ENV_SIZE);//CRC_DEFAULT;
+    
+    printf("Erasing %s...\n", env_name_spec);
+    rc = E2promBusErase(CONFIG_SYS_DEF_EEPROM_ADDR, off, CONFIG_ENV_SIZE);
+    if (rc == 0)
+    {
+        printf("Erasing at 0x%x -- 100%% complete.\n", off);
+    }
+    else
+    {
+        printf("Erasing at 0x%x error.\n", off);
+    }
     rc = E2promBusWrite(CONFIG_SYS_DEF_EEPROM_ADDR,
             off, (unsigned char *)env_new, CONFIG_ENV_SIZE);
 #ifdef LEGACY_STYLE
@@ -1640,6 +1699,10 @@ static int saveenv(void)
         free(res);
     }
 #endif
+    if (rc == 0)
+    {
+        printf("Writing to %s... done\n", env_name_spec);
+    }
     return rc;
 }
 
@@ -1762,6 +1825,228 @@ static int do_env_default(cmd_tbl_t *cmdtp, int __flag,
 	}
 
 	return cmd_usage(cmdtp);
+}
+static inline void *map_sysmem(phys_addr_t paddr, unsigned long len)
+{
+	return (void *)(uintptr_t)paddr;
+}
+static inline void unmap_sysmem(const void *vaddr)
+{
+}
+
+/*
+ * Print data buffer in hex and ascii form to the terminal.
+ *
+ * data reads are buffered so that each memory address is only read once.
+ * Useful when displaying the contents of volatile registers.
+ *
+ * parameters:
+ *    addr: Starting address to display at start of line
+ *    data: pointer to data buffer
+ *    width: data value width.  May be 1, 2, or 4.
+ *    count: number of values to display
+ *    linelen: Number of values to print per line; specify 0 for default length
+ */
+#define MAX_LINE_LENGTH_BYTES (64)
+#define DEFAULT_LINE_LENGTH_BYTES (16)
+int print_buffer(ulong addr, const void *data, uint width, uint count,
+		 uint linelen)
+{
+	/* linebuf as a union causes proper alignment */
+	union linebuf {
+		uint32_t ui[MAX_LINE_LENGTH_BYTES/sizeof(uint32_t) + 1];
+		uint16_t us[MAX_LINE_LENGTH_BYTES/sizeof(uint16_t) + 1];
+		uint8_t  uc[MAX_LINE_LENGTH_BYTES/sizeof(uint8_t) + 1];
+	} lb;
+	int i;
+
+	if (linelen*width > MAX_LINE_LENGTH_BYTES)
+		linelen = MAX_LINE_LENGTH_BYTES / width;
+	if (linelen < 1)
+		linelen = DEFAULT_LINE_LENGTH_BYTES / width;
+
+	while (count) {
+		uint thislinelen = linelen;
+		printf("%08lx:", addr);
+
+		/* check for overflow condition */
+		if (count < thislinelen)
+			thislinelen = count;
+
+		/* Copy from memory into linebuf and print hex values */
+		for (i = 0; i < thislinelen; i++) {
+			uint32_t x;
+			if (width == 4)
+				x = lb.ui[i] = *(volatile uint32_t *)data;
+			else if (width == 2)
+				x = lb.us[i] = *(volatile uint16_t *)data;
+			else
+				x = lb.uc[i] = *(volatile uint8_t *)data;
+			printf(" %0*x", width * 2, x);
+			//data += width;//joy 
+            data = (unsigned char *)data + width;
+		}
+
+		while (thislinelen < linelen) {
+			/* fill line with whitespace for nice ASCII print */
+			for (i=0; i<width*2+1; i++)
+				puts(" ");
+			linelen--;
+		}
+
+		/* Print data in ASCII characters */
+		for (i = 0; i < thislinelen * width; i++) {
+			if (!isprint(lb.uc[i]) || lb.uc[i] >= 0x80)
+				lb.uc[i] = '.';
+		}
+		lb.uc[i] = '\0';
+		printf("    %s\n", lb.uc);
+
+		/* update references */
+		addr += thislinelen * width;
+		count -= thislinelen;
+
+		//if (ctrlc())
+		//	return -1;
+	}
+
+	return 0;
+}
+int cmd_get_data_size(char* arg, int default_size)
+{
+	/* Check for a size specification .b, .w or .l.
+	 */
+	int len = strlen(arg);
+	if (len > 2 && arg[len-2] == '.') {
+		switch(arg[len-1]) {
+		case 'b':
+			return 1;
+		case 'w':
+			return 2;
+		case 'l':
+			return 4;
+		case 's':
+			return -2;
+		default:
+			return -1;
+		}
+	}
+	return default_size;
+}
+
+/* Display values from last command.
+ * Memory modify remembered values are different from display memory.
+ */
+static uint	dp_last_addr, dp_last_size;
+static uint	dp_last_length = 0x40;
+//static uint	mm_last_addr, mm_last_size;
+
+static	ulong	base_address = 0;
+
+/* Memory Display
+ *
+ * Syntax:
+ *	md{.b, .w, .l} {addr} {len}
+ */
+#define DISP_LINE_LEN	16
+static int do_mem_md(cmd_tbl_t *cmdtp, int flag, int argc, char * const argv[])
+{
+	ulong	addr, length;
+#if defined(CONFIG_HAS_DATAFLASH)
+	ulong	nbytes, linebytes;
+#endif
+	int	size;
+	int rc = 0;
+
+	/* We use the last specified parameters, unless new ones are
+	 * entered.
+	 */
+	addr = dp_last_addr;
+	size = dp_last_size;
+	length = dp_last_length;
+
+	if (argc < 2)
+		return CMD_RET_USAGE;
+
+	if ((flag & CMD_FLAG_REPEAT) == 0) {
+		/* New command specified.  Check for a size specification.
+		 * Defaults to long if no or incorrect specification.
+		 */
+		if ((size = cmd_get_data_size(argv[0], 4)) < 0)
+			return 1;
+
+		/* Address is specified since argc > 1
+		*/
+		addr = SimpleStrtoul(argv[1], NULL, 16);
+		addr += base_address;
+
+		/* If another parameter, it is the length to display.
+		 * Length is the number of objects, not number of bytes.
+		 */
+		if (argc > 2)
+			length = SimpleStrtoul(argv[2], NULL, 16);
+	}
+
+#if defined(CONFIG_HAS_DATAFLASH)
+	/* Print the lines.
+	 *
+	 * We buffer all read data, so we can make sure data is read only
+	 * once, and all accesses are with the specified bus width.
+	 */
+	nbytes = length * size;
+	do {
+		char	linebuf[DISP_LINE_LEN];
+		void* p;
+		linebytes = (nbytes>DISP_LINE_LEN)?DISP_LINE_LEN:nbytes;
+
+		rc = read_dataflash(addr, (linebytes/size)*size, linebuf);
+		p = (rc == DATAFLASH_OK) ? linebuf : (void*)addr;
+		print_buffer(addr, p, size, linebytes/size, DISP_LINE_LEN/size);
+
+		nbytes -= linebytes;
+		addr += linebytes;
+		if (ctrlc()) {
+			rc = 1;
+			break;
+		}
+	} while (nbytes > 0);
+#else
+
+# if defined(CONFIG_BLACKFIN)
+	/* See if we're trying to display L1 inst */
+	if (addr_bfin_on_chip_mem(addr)) {
+		char linebuf[DISP_LINE_LEN];
+		ulong linebytes, nbytes = length * size;
+		do {
+			linebytes = (nbytes > DISP_LINE_LEN) ? DISP_LINE_LEN : nbytes;
+			memcpy(linebuf, (void *)addr, linebytes);
+			print_buffer(addr, linebuf, size, linebytes/size, DISP_LINE_LEN/size);
+
+			nbytes -= linebytes;
+			addr += linebytes;
+			if (ctrlc()) {
+				rc = 1;
+				break;
+			}
+		} while (nbytes > 0);
+	} else
+# endif
+
+	{
+		ulong bytes = size * length;
+		const void *buf = map_sysmem(addr, bytes);
+
+		/* Print the lines. */
+		print_buffer(addr, buf, size, length, DISP_LINE_LEN / size);
+		addr += bytes;
+		unmap_sysmem(buf);
+	}
+#endif
+
+	dp_last_addr = addr;
+	dp_last_length = length;
+	dp_last_size = size;
+	return (rc);
 }
 
 void  run_main_loop(void (*callback)(void *), void *para)
