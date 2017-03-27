@@ -24,6 +24,13 @@ typedef              cmd_tbl_t             CmdTbl;
 */
 int Init_Env(void);
 
+typedef struct testmsg
+{
+    int total;
+    int sended;
+    int blockSize;
+}TestMsg_t;
+
 #ifdef __cplusplus
 }
 #endif

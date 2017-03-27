@@ -11,12 +11,17 @@
 #include <stdint.h>
 #include <string.h>
 #include <stdlib.h>
+#include <stdbool.h>
 #include "cmd.h"
 #include "hw_eeprom.h"
 #include "utilities.h"
 #include "version.h"
+#include "radio.h"
+
+#include "LoRaMac.h"
 
 #define DR_NUM                   16         /* data rate num*/
+#define offsetof(TYPE, MEMBER) ((size_t) &((TYPE *)0)->MEMBER)
 
 typedef enum DRType{
     US915 = 0,
@@ -36,9 +41,25 @@ typedef struct DRData{
 }DRData_t;
 
 static DRData_t DrData;
+//typedef struct global GlobalData_t;
+//unsigned char    data[1024]; /* Environment data        */
+
+unsigned int  other_addr = CONFIG_OTHER_VAR_OFFSET; /* e2p data*/
+
+typedef struct global
+{
+    uint32_t    crc;        /* CRC32 over data bytes    */    
+    LoRaMacTxConfig_t TxConfig;
+    DRData_t          DRData;
+    /**/
+    TestMsg_t         TestMsg;
+}GlobalData_t;
+//void (*save)(GlobalData_t *self);
+//void (*load)(GlobalData_t *self);
 
 extern void SX1276Reset( void );
 extern int SetLoraVar(const char *Key, unsigned char *Hex, int Num);
+extern TestMsg_t *GetTestMsg(void);
 
 /* Private functions ---------------------------------------------------------*/
 static int DoReset(cmd_tbl_t *cmdtp, int flag, int argc, char * const argv[])
@@ -89,6 +110,286 @@ const char *DrType2Str(DRType_e Type)
     }
     
     return Type < DRTYPENUM ? TypeName[Type]:TypeName[3];
+}
+
+typedef struct Ch_Config
+{
+    unsigned char index;
+    float freq;
+    int dr_min;
+    int dr_max;
+}Ch_Config_t;
+#define MAX_CHANS   8
+Ch_Config_t Chs[MAX_CHANS];
+static int DoTestMsg(cmd_tbl_t *cmdtp, int flag, int argc, char * const argv[])
+{
+    int Ret = 0;
+    int i = 0;
+    int total = 0;
+    TestMsg_t *testMsg = GetTestMsg();
+    
+    if (argc < 2)
+    {
+        PrintUsage(cmdtp);
+        return Ret;
+    }
+    if (!strcmp(argv[1], "--byte"))
+    {
+        if (argc != 3)
+        {
+            Ret = -1;
+            return Ret;
+        }
+        total = atoi(argv[2]);
+        if (total > 1024*1024)
+        {
+            printf("too big\n");
+            Ret = -1;
+            return Ret;
+        }
+        testMsg->total = total;
+        testMsg->sended= 0;
+        return Ret;       
+    }    
+    for (i=1; i<argc; i++)
+    {
+        if (!strcmp(argv[i], "--status"))
+        {
+            printf("%%%d ", (testMsg->sended*100)/testMsg->total);
+        }
+        else if (!strcmp(argv[i], "--left"))
+        {
+            printf("%d ", testMsg->total-testMsg->sended);
+        }
+        else if (!strcmp(argv[i], "--total"))
+        {
+            printf("%d ", testMsg->total);
+        }
+        else
+        {
+            break;
+        }
+    }
+    if (i != argc)
+    {
+        Ret = -1;
+        printf("param err!\n");
+        return Ret;
+    }
+    printf("\n");
+    return Ret;
+}
+static int DoConfigTx(cmd_tbl_t *cmdtp, int flag, int argc, char * const argv[])
+{
+    LoRaMacTxConfig_t *TxConfig = LoRaMacGetTxConfig();
+    /*
+        *  txconfig 
+        *  power   Sets the output power [dBm]
+            LoRa: [0: 125 kHz, 1: 250 kHz,
+        *                                 2: 500 kHz, 3: Reserved] 
+        *   datarate   6-12
+        *   coderate   1-4  
+        *   preambleLen  8
+        *
+        *   timeout    [ms]
+        *   eg:txconfig --power [1-7]  --bandwidth [125/250/500] --sf [7-12] --timeout=3000
+        *       txconfig get
+        */ 
+    int Ret = 0;
+    int i =0;
+    int8_t txPower=0;
+    uint32_t bandwidth=0;
+    uint32_t datarate=0;
+    //uint8_t coderate=0;
+    //bool fixLen;
+    //bool crcOn; 
+    //bool FreqHopOn;
+    //uint8_t HopPeriod;
+    //bool iqInverted;
+    uint32_t timeout=0;        
+    uint8_t setMap = 0;
+    uint32_t sleepTime = 0;
+    
+    if (argc < 2)
+    {
+        PrintUsage(cmdtp);
+        return Ret;
+    }
+    if (!strcmp(argv[1], "get"))
+    {
+        printf("txconfig  power %d bandwidth %u sf %u timeout %u freq %.2f sleeptime %u\n",
+            TxConfig->txPower, TxConfig->bandwidth, TxConfig->datarate, TxConfig->timeout,
+            470.00, TxConfig->sleepTime);
+        return Ret;
+    }
+    for (i=1; i<argc; i++)
+    {
+        if (!strcmp(argv[i], "--power"))
+        {
+            txPower = atoi(argv[++i]);
+            if (txPower < 0)
+            {
+                break;
+            }
+            //if (txPower < 1 || txPower > 20)
+            //{
+            //    break;
+            //}
+            setMap |= 0x1;
+        }
+        else if (!strcmp(argv[i], "--bandwidth"))
+        {
+            bandwidth = (uint32_t)atol(argv[++i]);
+            if (bandwidth != 125 && bandwidth!=250 && bandwidth!=500)
+            {
+                break;
+            }
+            setMap |= 0x1<<1;
+        }
+        else if (!strcmp(argv[i], "--freq"))
+        {
+            ++i;
+        }
+        else if (!strcmp(argv[i], "--sf"))
+        {
+            datarate = (uint32_t)atol(argv[++i]);
+            if (datarate < 7 || datarate > 12)
+            {
+                break;
+            }            
+            setMap |= 0x1<<2;
+        }        
+        else if (!strcmp(argv[i], "--timeout"))
+        {
+            timeout = (uint32_t)atol(argv[++i]);
+            setMap |= 0x1<<3;
+        }
+        else if (!strcmp(argv[i], "--sleeptime"))
+        {
+            sleepTime = (uint32_t)atol(argv[++i]);
+            setMap |= 0x1<<4;
+        }
+    }
+    if (i != argc)
+    {
+        Ret = -1;
+        printf("param err!\n");
+        return Ret;
+    }
+    if (setMap&0x1)
+    {
+        TxConfig->txPower = txPower;
+    }
+    if (setMap&(0x1<<1))
+    {
+        TxConfig->bandwidth = bandwidth;
+    }
+    if (setMap&(0x1<<2))
+    {
+        TxConfig->datarate = datarate;
+    }
+    if (setMap&(0x1<<3))
+    {
+        TxConfig->timeout = timeout;
+    }
+    if (setMap&(0x1<<4))
+    {
+        TxConfig->sleepTime = sleepTime;
+    } 
+    //memcpy((unsigned char *)other_addr+offsetof(GlobalData_t, TxConfig), TxConfig, sizeof(LoRaMacTxConfig_t));
+    write_phy_addr(offsetof(GlobalData_t, TxConfig), TxConfig, sizeof(LoRaMacTxConfig_t));
+    return Ret;
+}
+static int DoCh(cmd_tbl_t *cmdtp, int flag, int argc, char * const argv[])
+{
+    /*-----------------------------------------------------------------------------
+      * Set channel parameter of LoRaWAN modem, Set frequecy zero to disable one channel.
+        Format:
+        AT+CH="LCn", ["Freq"], ["DR_MIN"], ["DR_MAX"]
+        // Change the LCn channel frequency to "Freq"
+        // "Freq" is in MHz.
+        // Available DR_MIN/DR_MAX range DR0 ~ DR15
+        // Disable channel LC2
+        eg: AT+CH=2, 0
+      *-----------------------------------------------------------------------------*/
+    int Ret = 0;
+ 
+    ChannelParams_t *chan = NULL;
+    if (argc < 3)
+    {
+        PrintUsage(cmdtp);
+        return Ret;
+    }
+    if (argc == 3)
+    {
+        if (strcmp(argv[1], "get") == 0)
+        {
+            int chanNum;
+            chanNum = atoi(argv[2]);
+            if (chanNum < 0 || chanNum > 8)
+            {
+                printf("err param\n");
+                Ret = -1;
+                return Ret;
+            }
+            chan = LoRaMacGetChan(chanNum);
+            printf("%d:%u,DR%d DR%d\n", chanNum, chan->Frequency, chan->DrRange.Value & 0xf, chan->DrRange.Value & 0xf0 >> 4);
+        }
+        else
+        {
+            printf("err para\n");
+            Ret = -1;
+            return Ret;
+        }
+    }
+    if (argc > 4)
+    {
+        if (strcmp(argv[1], "set") == 0)
+        {
+            int chanNum;
+            float freq;
+            int dr_min;
+            int dr_max;
+            if (argc == 4)
+            {
+                chanNum = atoi(argv[2]);
+                freq = atof(argv[3]);
+            }
+            else if (argc == 5)
+            {
+                chanNum = atoi(argv[2]);
+                freq = atof(argv[3]);
+                sscanf(argv[4], "DR%i", &dr_min);
+            }
+            else if (argc == 6)
+            {
+                chanNum = atoi(argv[2]);
+                freq = atof(argv[3]);
+                sscanf(argv[4], "DR%i", &dr_min);
+                sscanf(argv[5], "DR%i", &dr_max);
+            }
+            if (chanNum < 0 || chanNum > 8)
+            {
+                printf("err param\n");
+                Ret = -1;
+                return Ret;
+            }
+            //Chs[chanNum].freq = freq;
+            //Chs[chanNum].dr_min = dr_min;
+            //Chs[chanNum].dr_max = dr_max;
+            chan = LoRaMacGetChan(chanNum);
+            chan->Frequency = (uint32_t)(freq*100);
+            chan->DrRange.Value = dr_max&0xf<<4 | dr_min&0xf;
+            
+        }
+        else
+        {
+            printf("err para\n");
+            Ret = -1;
+            return Ret;
+        }
+    }
+    return Ret;
 }
 
 static void DoDrPrint(DRData_t *pDrData)
@@ -593,6 +894,15 @@ void EnvRelocate(void)
         Str2Hex(CONFIG_APPSKEY, Hex, 16);
     }
     SetLoraVar("APPSKEY", Hex, 16);
+    LoRaMacTxConfig_t *TxConfig = LoRaMacGetTxConfig();
+    //memcpy(TxConfig, (unsigned char*)other_addr+offsetof(GlobalData_t, TxConfig), sizeof(LoRaMacTxConfig_t));
+    read_phy_addr(TxConfig, offsetof(GlobalData_t, TxConfig), sizeof(LoRaMacTxConfig_t));
+    TxConfig->coderate = 0;
+    TxConfig->preambleLen = 0;
+    TestMsg_t *TestMsg = GetTestMsg();
+    TestMsg->blockSize = 64;
+    TestMsg->sended = 0;
+    TestMsg->total = 0;
     
 }
 int Init_Env(void)
@@ -658,11 +968,14 @@ int Init_Env(void)
             .name = "ch",
             .usage = "config sx1278 chan",
 #ifdef CONFIG_SYS_LONGHELP
-            .help = "",
+            .help = "ch [num] [Freq] [DR_MIN] [DR_MAX]\n"
+                    "Change the LCn channel frequency to \"Freq\""
+                    "\"Freq\" is in MHz. Available DR_MIN/DR_MAX range DR0 ~ DR15"
+                    "Set frequecy zero to disable one channel",
 #endif            
             .maxargs = 1,
             .repeatable = 1,
-            .cmd = DoReset,
+            .cmd = DoCh,
         },
         {
             .name = "power",
@@ -706,6 +1019,31 @@ int Init_Env(void)
             .repeatable = 1,
             .cmd = DoId,
         },
+        {
+            .name = "txconfig",
+            .usage = "txconfig [get]/...",
+#ifdef CONFIG_SYS_LONGHELP
+            .help = "txconfig [get] --power 2  --bandwidth 500  --sf 7  --timeout 3000  --freq 434.00 --sleeptime 2000\n"
+                    "eg: txconfig get\n"
+                    "    txconfig  --power 2  --bandwidth 500  --sf 7  --timeout 3000  --freq 434.00 --sleeptime 2000\n",
+#endif            
+            .maxargs = 13,
+            .repeatable = 1,
+            .cmd = DoConfigTx,
+        },
+        {
+            .name = "testmsg",
+            .usage = "testmsg --byte [1024] /[--status] [--left] [ --total]",
+#ifdef CONFIG_SYS_LONGHELP
+            .help = ""
+                    "eg: \n"
+                    "    testmsg --byte 1024\n"
+                    "    testmsg  --status --left --total\n",
+#endif            
+            .maxargs = 4,
+            .repeatable = 1,
+            .cmd = DoTestMsg,
+        },          
         
     };
 

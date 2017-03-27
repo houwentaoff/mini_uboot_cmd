@@ -9,8 +9,8 @@
 #ifndef __CONFIG_H__
 #define __CONFIG_H__
 
-#define CONFIG_DEVADDR    "02:5B:10:30"                                      /* env DEVADDR */
-#define CONFIG_DEVEUI     "BE:7A:00:00:00:00:02:EF"                          /* env DEVEUI */
+#define CONFIG_DEVADDR    "02:5B:10:22"                                      /* env DEVADDR */
+#define CONFIG_DEVEUI     "BE:7A:00:00:00:00:02:EA"                          /* env DEVEUI */
 #define CONFIG_APPEUI     "01:01:01:01:01:01:01:01"                          /* env APPEUI */
 #define CONFIG_APPKEY     "E5:42:2A:1B:4D:F9:13:4B:C7:52:5D:F4:FE:BA:53:6E"  /* env APPKEY */
 #define CONFIG_NETID      "01:01:01"                                         /* env NETID   */
@@ -34,6 +34,7 @@
 #define CONFIG_ENV_SIZE                 (0x400)                              /* 1K */
 #define ENV_HEADER_SIZE	                (sizeof(uint32_t))                   /* env head size */
 #define CONFIG_SYS_DEF_EEPROM_ADDR      0x00                                 /* eeprom device addr */
-#define CONFIG_ENV_OFFSET               (0x08080800-0x08080000)                          /* eeprom addr : 0x08080800 --0x08080BFF   1k */
+#define CONFIG_ENV_OFFSET               (0x08080800-0x08080000)              /* eeprom addr : 0x08080800 --0x08080BFF   1k */
+#define CONFIG_OTHER_VAR_OFFSET         0x08080600                           /* eeprom struct addr do not modify this macro */
 
 #endif

@@ -79,7 +79,9 @@ char *getenv(const char *name);
  */
 int setenv(const char *varname, const char *varvalue);
 #endif
-
+uint32_t  crc32 (uint32_t seed, const char *buffer, uint32_t len);
+void read_phy_addr(void *value, unsigned int offset, size_t size);
+void write_phy_addr(unsigned int offset, void *value, size_t size);
 #ifdef __cplusplus
 }
 #endif
