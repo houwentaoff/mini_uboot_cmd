@@ -59,7 +59,7 @@ void run_main_loop(callback cb, void *para);
  * @return          0: success -1:fail
  */
 int hush_init_var(void);
-
+#ifdef CONFIG_MINISHELL
 #ifndef __GLIBC__
 /**
  * @brief           Same as system function getenv
@@ -78,6 +78,8 @@ char *getenv(const char *name);
  * @return 
  */
 int setenv(const char *varname, const char *varvalue);
+#endif
+int saveenv(void);
 #endif
 uint32_t  crc32 (uint32_t seed, const char *buffer, uint32_t len);
 void read_phy_addr(void *value, unsigned int offset, size_t size);

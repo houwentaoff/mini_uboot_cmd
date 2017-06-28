@@ -325,7 +325,6 @@ static int env_print(char *name, int flag);
 cmd_tbl_t *find_cmd_tbl (const char *cmd, cmd_tbl_t *table, int table_len);
 cmd_tbl_t *find_cmd (const char *cmd);
 static int cmd_usage(const cmd_tbl_t *cmdtp);
-static int saveenv(void);
 static void set_default_env(const char *s);
 
 static int hsearch_r(ENTRY item, ACTION action, ENTRY ** retval,
@@ -1098,6 +1097,8 @@ int hdelete_r(const char *key, struct hsearch_data *htab,
  * return address of storage for that variable,
  * or NULL if not found
  */
+ 
+#ifdef CONFIG_MINISHELL
 #ifndef __GLIBC__
 char *getenv(const char *name)
 {
@@ -1107,6 +1108,7 @@ char *getenv(const char *name)
     hsearch_r(e, FIND, &ep, &env_htab, 0);
     return ep ? ep->data : NULL;
 }
+#endif
 #endif
 int do_setenv(const char *varname, const char *varvalue)
 {
@@ -1654,7 +1656,7 @@ static int env_print(char *name, int flag)
     /* should never happen */
     return 0;
 }
-static int saveenv(void)
+int saveenv(void)
 {
     char *res = NULL;
     ssize_t len;
@@ -2162,7 +2164,11 @@ void read_phy_addr(void *value, unsigned int offset, size_t size)
         cmd_err("you have no permissions\n");
         return;
     }
+#ifdef CONFIG_NOEEPROM
+    (void)value;
+#else    
     memcpy(value, (unsigned char *)gd->other_addr+offset, size);
+#endif
 }
 void write_phy_addr(unsigned int offset, void *value, size_t size)
 {
@@ -2171,5 +2177,10 @@ void write_phy_addr(unsigned int offset, void *value, size_t size)
         cmd_err("you have no permissions\n");
         return;
     }
+#ifdef CONFIG_NOEEPROM
+    (void)value;
+#else
+    printf("write addr[0x%x] size[%d]\n", gd->other_addr+offset, size);
     memcpy((unsigned char *)gd->other_addr+offset, value, size);
+#endif
 }

@@ -19,9 +19,23 @@
 #include "radio.h"
 
 #include "LoRaMac.h"
+#include "LoRa.h"
 
 #define DR_NUM                   16         /* data rate num*/
 #define offsetof(TYPE, MEMBER) ((size_t) &((TYPE *)0)->MEMBER)
+
+//#define CN470_DEFAULT_TX_POWER                    TX_POWER_1
+
+
+#define MAX_SF      12
+#define MIN_SF      7
+#define MAX_POWER   7
+#define MIN_POWER   0
+#define MIN_FREQ_RANGE  400000000
+#define MAX_FREQ_RANGE  600000000
+
+//#define DEFAULT_TX_TIMEOUT
+#define BLOCK_SIZE   32
 
 typedef enum DRType{
     US915 = 0,
@@ -60,8 +74,24 @@ typedef struct global
 extern void SX1276Reset( void );
 extern int SetLoraVar(const char *Key, unsigned char *Hex, int Num);
 extern TestMsg_t *GetTestMsg(void);
+extern void SetLoRaMacParams(const int8_t *ChannelsTxPower, const int8_t *ChannelsDatarate);
+extern int8_t GetIndexOfTxpower(uint32_t txPower);
+extern void SetLoRaParam(const uint32_t *TxDutyCycleTime, const int8_t *TxDatarate);
+static int CheckAndSetTxParam(LoRaMacTxConfig_t *TxConfig);
+
 
 /* Private functions ---------------------------------------------------------*/
+#ifdef CONFIG_MINISHELL
+typedef struct Ch_Config
+{
+    unsigned char index;
+    float freq;
+    int dr_min;
+    int dr_max;
+}Ch_Config_t;
+#define MAX_CHANS   8
+Ch_Config_t Chs[MAX_CHANS];
+
 static int DoReset(cmd_tbl_t *cmdtp, int flag, int argc, char * const argv[])
 {
     int Ret = 0;
@@ -112,15 +142,7 @@ const char *DrType2Str(DRType_e Type)
     return Type < DRTYPENUM ? TypeName[Type]:TypeName[3];
 }
 
-typedef struct Ch_Config
-{
-    unsigned char index;
-    float freq;
-    int dr_min;
-    int dr_max;
-}Ch_Config_t;
-#define MAX_CHANS   8
-Ch_Config_t Chs[MAX_CHANS];
+
 static int DoTestMsg(cmd_tbl_t *cmdtp, int flag, int argc, char * const argv[])
 {
     int Ret = 0;
@@ -192,7 +214,7 @@ static int DoConfigTx(cmd_tbl_t *cmdtp, int flag, int argc, char * const argv[])
         *   preambleLen  8
         *
         *   timeout    [ms]
-        *   eg:txconfig --power [1-7]  --bandwidth [125/250/500] --sf [7-12] --timeout=3000
+        *   eg:txconfig --power [0-7]  --bandwidth [125/250/500] --sf [7-12] --timeout=3000
         *       txconfig get
         */ 
     int Ret = 0;
@@ -200,6 +222,7 @@ static int DoConfigTx(cmd_tbl_t *cmdtp, int flag, int argc, char * const argv[])
     int8_t txPower=0;
     uint32_t bandwidth=0;
     uint32_t datarate=0;
+    uint32_t  freq = 0;
     //uint8_t coderate=0;
     //bool fixLen;
     //bool crcOn; 
@@ -209,6 +232,8 @@ static int DoConfigTx(cmd_tbl_t *cmdtp, int flag, int argc, char * const argv[])
     uint32_t timeout=0;        
     uint8_t setMap = 0;
     uint32_t sleepTime = 0;
+    int8_t indexDatarate = 0;
+    int8_t indexTxPower = 0;
     
     if (argc < 2)
     {
@@ -217,9 +242,9 @@ static int DoConfigTx(cmd_tbl_t *cmdtp, int flag, int argc, char * const argv[])
     }
     if (!strcmp(argv[1], "get"))
     {
-        printf("txconfig  power %d bandwidth %u sf %u timeout %u freq %.2f sleeptime %u\n",
+        printf("txconfig  power %d bandwidth %u sf %u timeout %u freq %u sleeptime %u\n",
             TxConfig->txPower, TxConfig->bandwidth, TxConfig->datarate, TxConfig->timeout,
-            470.00, TxConfig->sleepTime);
+            TxConfig->frequency, TxConfig->sleepTime);
         return Ret;
     }
     for (i=1; i<argc; i++)
@@ -227,7 +252,7 @@ static int DoConfigTx(cmd_tbl_t *cmdtp, int flag, int argc, char * const argv[])
         if (!strcmp(argv[i], "--power"))
         {
             txPower = atoi(argv[++i]);
-            if (txPower < 0)
+            if (txPower < MIN_POWER && txPower > MAX_POWER)
             {
                 break;
             }
@@ -248,12 +273,17 @@ static int DoConfigTx(cmd_tbl_t *cmdtp, int flag, int argc, char * const argv[])
         }
         else if (!strcmp(argv[i], "--freq"))
         {
-            ++i;
+            freq = (uint32_t)atol(argv[++i]);
+            if (freq < MIN_FREQ_RANGE|| freq > MAX_FREQ_RANGE)
+            {
+                break;
+            }  
+            setMap |= 0x1<<5;
         }
         else if (!strcmp(argv[i], "--sf"))
         {
             datarate = (uint32_t)atol(argv[++i]);
-            if (datarate < 7 || datarate > 12)
+            if (datarate < MIN_SF || datarate > MAX_SF)
             {
                 break;
             }            
@@ -276,9 +306,12 @@ static int DoConfigTx(cmd_tbl_t *cmdtp, int flag, int argc, char * const argv[])
         printf("param err!\n");
         return Ret;
     }
+    
     if (setMap&0x1)
     {
         TxConfig->txPower = txPower;
+        indexTxPower = GetIndexOfTxpower(txPower);
+        SetLoRaMacParams(&indexTxPower, NULL);
     }
     if (setMap&(0x1<<1))
     {
@@ -287,6 +320,9 @@ static int DoConfigTx(cmd_tbl_t *cmdtp, int flag, int argc, char * const argv[])
     if (setMap&(0x1<<2))
     {
         TxConfig->datarate = datarate;
+        indexDatarate = GetIndexOfDatarate(datarate);
+        SetLoRaMacParams(NULL, &indexDatarate);        
+        SetLoRaParam(NULL, &indexDatarate);
     }
     if (setMap&(0x1<<3))
     {
@@ -295,7 +331,13 @@ static int DoConfigTx(cmd_tbl_t *cmdtp, int flag, int argc, char * const argv[])
     if (setMap&(0x1<<4))
     {
         TxConfig->sleepTime = sleepTime;
-    } 
+        SetLoRaParam(&sleepTime, NULL);
+    }
+    if (setMap&(0x1<<5))
+    {
+        TxConfig->frequency = freq;
+    }
+    
     //memcpy((unsigned char *)other_addr+offsetof(GlobalData_t, TxConfig), TxConfig, sizeof(LoRaMacTxConfig_t));
     write_phy_addr(offsetof(GlobalData_t, TxConfig), TxConfig, sizeof(LoRaMacTxConfig_t));
     return Ret;
@@ -782,12 +824,12 @@ static int DoPort(cmd_tbl_t *cmdtp, int flag, int argc, char * const argv[])
 
     return Ret;
 }
-
+#endif
 void EnvRelocate(void)
 {
     char *Value = NULL;    
     uint8_t Hex[16+1] = {0};
-
+    
     memset(&DrData, 0, sizeof (DRData_t));    
     DrData.DrNum = DR_NUM;
 #ifdef CONFIG_MINISHELL
@@ -897,17 +939,65 @@ void EnvRelocate(void)
     LoRaMacTxConfig_t *TxConfig = LoRaMacGetTxConfig();
     //memcpy(TxConfig, (unsigned char*)other_addr+offsetof(GlobalData_t, TxConfig), sizeof(LoRaMacTxConfig_t));
     read_phy_addr(TxConfig, offsetof(GlobalData_t, TxConfig), sizeof(LoRaMacTxConfig_t));
+    CheckAndSetTxParam(TxConfig);
+}
+
+static int CheckAndSetTxParam(LoRaMacTxConfig_t *TxConfig)
+{
+    int8_t datarate = 0;
+    int8_t txPower = 0;
+
+    if (!TxConfig)
+    {
+        return -1;
+    }
+
     TxConfig->coderate = 0;
     TxConfig->preambleLen = 0;
     TestMsg_t *TestMsg = GetTestMsg();
-    TestMsg->blockSize = 64;
+    TestMsg->blockSize = BLOCK_SIZE;
     TestMsg->sended = 0;
     TestMsg->total = 0;
     
+    if (TxConfig->datarate < MIN_SF|| TxConfig->datarate > MAX_SF)
+    {
+        TxConfig->datarate = CONFIG_DEFAULT_SF;
+    }
+    if (TxConfig->txPower < MIN_POWER|| TxConfig->txPower > MAX_POWER)
+    {
+        TxConfig->txPower = CONFIG_DEFAULT_POWER;
+    }
+    if (TxConfig->timeout == 0 || TxConfig->timeout == 0xffffffff)
+    {
+        TxConfig->timeout = DEFAULT_TX_TIMEOUT;
+    }
+    if (TxConfig->sleepTime == 0 || TxConfig->sleepTime == 0xffffffff)
+    {
+        TxConfig->sleepTime = CONFIG_DEFAULT_SLEEPTIME;
+    }
+    if (TxConfig->frequency < MIN_FREQ_RANGE || TxConfig->frequency > MAX_FREQ_RANGE)
+    {
+        TxConfig->frequency = CONFIG_DEFAULT_FREQ;
+    }
+    if (TxConfig->bandwidth != 125 && TxConfig->bandwidth != 250 && TxConfig->bandwidth != 500)
+    {
+        TxConfig->bandwidth = CONFIG_DEFAULT_BANDWIDTH;
+    }
+    datarate = GetIndexOfDatarate(TxConfig->datarate);
+    txPower = GetIndexOfTxpower(TxConfig->txPower);
+    
+    SetLoRaParam(&TxConfig->sleepTime, &datarate);
+    SetLoRaMacParams(&txPower, &datarate);
+    if (TxConfig->bandwidth != 125 && TxConfig->bandwidth != 250 && TxConfig->bandwidth != 500)
+    {
+        TxConfig->bandwidth = DEFAULT_BANDWIDTH;
+    }
+    return 0;
 }
 int Init_Env(void)
 {
     int Ret = 0;
+#ifdef CONFIG_MINISHELL
     int i =0;
     CmdTbl CmdArray[]={
         {
@@ -1023,9 +1113,9 @@ int Init_Env(void)
             .name = "txconfig",
             .usage = "txconfig [get]/...",
 #ifdef CONFIG_SYS_LONGHELP
-            .help = "txconfig [get] --power 2  --bandwidth 500  --sf 7  --timeout 3000  --freq 434.00 --sleeptime 2000\n"
+            .help = "txconfig [get] --power 2  --bandwidth 500  --sf 7  --timeout 3000  --freq 434000000 --sleeptime 2000\n"
                     "eg: txconfig get\n"
-                    "    txconfig  --power 2  --bandwidth 500  --sf 7  --timeout 3000  --freq 434.00 --sleeptime 2000\n",
+                    "    txconfig  --power 2  --bandwidth 500  --sf 7  --timeout 3000  --freq 434000000 --sleeptime 2000\n",
 #endif            
             .maxargs = 13,
             .repeatable = 1,
@@ -1051,6 +1141,7 @@ int Init_Env(void)
     {
         Shell_Cmd_Register(&CmdArray[i]);
     }
+#endif    
     // init env
     EnvRelocate();
 
