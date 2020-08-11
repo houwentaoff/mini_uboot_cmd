@@ -58,7 +58,7 @@
  int help_cmd(struct cmd_tbl_s *cmdtp, int argc, char * const argv[]);
  int go_cmd(struct cmd_tbl_s *cmdtp, int argc, char * const argv[]);
  int cmd_usage(const cmd_tbl_t *cmdtp);
- 
+ int devmem_cmd(struct cmd_tbl_s *cmdtp, int argc, char * const argv[]);
  cmd_tbl_t cmd_tbls[] = {
      {
          .name = "help",
@@ -74,8 +74,15 @@
          .cmd = go_cmd,
          .usage = "go 0x000000",
      },
+     {
+         .name = "devmem",
+         .maxargs = 4,
+         .repeatable = 0,
+         .cmd = devmem_cmd,
+         .usage = "devmem ADDRESS [WIDTH [VALUE]]",
+     }, 
  };
-#define CONFIG_SYS_CMDCOUNT   3
+#define CONFIG_SYS_CMDCOUNT   4
 #define CONFIG_SYS_HELP_CMD_WIDTH   8       
  /*  test if ctrl-c was pressed */
  static int ctrlc_disabled = 0;/*  see disable_ctrl() */
@@ -88,8 +95,14 @@
  *  weak api (override sys api)
  *-----------------------------------------------------------------------------*/
  
-extern void uart_putc_polled(char c);
-extern char uart_getchar_polled(void);
+void uart_putc_polled(char c)
+{
+    return putchar(c);
+}
+char uart_getchar_polled(void)
+{
+    return getchar();
+}
 
 int puts(const char *s)
 {
@@ -291,7 +304,7 @@ static int tiny_print( char **out, const char *format, va_list args, unsigned in
 				width += *format - '0';
 			}
 			if( *format == 's' ) {
-				register char *s = (char *)(long)va_arg( args, unsigned int );
+				register char *s = (char *)(unsigned long)va_arg( args, unsigned long );
 				pc += prints (out, s?s:"(null)", width, pad, buflimit);
 				continue;
 			}
@@ -547,11 +560,97 @@ void *my_memcpy(void *dest, const void *src, size_t count)
         p += 2;
         hex2u64(p, &addr);
      }
-     my_printf("go addr [0x%x]\n", addr);
-     longjump(addr);
+     my_printf("go addr [0x%x_%x]\n", addr>>32, addr);
+     //longjump(addr);
      return 0;
  }
- 
+  int devmem_cmd(struct cmd_tbl_s *cmdtp, int argc, char * const argv[])
+ {
+     int i = 0;
+     unsigned long long addr = 0;
+     const unsigned char *p = NULL;
+     unsigned int width = 32;
+     unsigned long long tmp = 0;
+     unsigned long long writeval = 0;
+     unsigned long long read_result = 0;
+     
+     if (argc <= 1)
+     {
+         my_printf("Usage: %s\n",  cmdtp->usage);
+         return (-1);
+     }
+     if (!cmdtp)
+     {
+         my_printf("error\n");
+         return -1;
+     }
+     /* ADDRESS */
+     p = argv[1];
+     if ( (p[0] == '0') && (p[1] == 'x'||p[1] == 'X' ) )
+     {
+        p += 2;
+        hex2u64(p, &addr);
+     }
+     /* WIDTH */
+     if (argv[2]) {
+        width = (argv[2][0] - '0')*10 + (argv[2][1] - '0');
+        /* VALUE */
+        if (argv[3]){
+            p = argv[3];
+            if ( (p[0] == '0') && (p[1] == 'x'||p[1] == 'X' ) ){
+                p += 2;
+                hex2u64(p, &tmp);
+                writeval = tmp;
+            }
+        }
+     }
+#if 0     
+     if (!argv[3]){
+        switch (width) {
+        case 8:
+         read_result = *(volatile uint8_t*)addr;
+         break;
+        case 16:
+         read_result = *(volatile uint16_t*)addr;
+         break;
+        case 32:
+         read_result = *(volatile uint32_t*)addr;
+         break;
+        case 64:
+         read_result = *(volatile uint64_t*)addr;
+         break;
+        default:
+            my_printf("bad width\n");
+        break;
+        }
+        my_printf("%x_%x\n", read_result>>32, read_result);
+     }
+     else
+     {
+        switch (width) {
+        case 8:
+         *(volatile uint8_t*)addr = writeval;
+         break;
+        case 16:
+         *(volatile uint16_t*)addr = writeval;
+         break;
+        case 32:
+         *(volatile uint32_t*)addr = writeval;
+         break;
+        case 64:
+         *(volatile uint64_t*)addr = writeval;
+         break;
+        default:
+            my_printf("bad width\n");
+        break;
+        }
+     }  
+#endif     
+     my_printf("devmem addr [0x%x_%x] width[%d]writeval[0x%x_%x]\n",
+                addr>>32, addr, width, writeval>>32, writeval);
+     //longjump(addr);
+     return 0;
+ }
  void prt_puts(const char *str)
  {
      while (*str)
@@ -985,7 +1084,7 @@ void *my_memcpy(void *dest, const void *src, size_t count)
   *  Description:  
   * =====================================================================================
   */
- int shell_main ()
+ int main ()
  {
      run_main_loop();
      return 0;
